@@ -46,7 +46,7 @@ Experiment with varying block sizes (e.g., 16, 32, 64 threads per block) and ana
 Compare the performance of the GPU-based matrix multiplication using cuBLAS with a standard CPU-based matrix multiplication implementation.
 # PROGRAM:
 ```
-%%writefile matrix_multiplication.cu
+cuda_code = r'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -54,115 +54,115 @@ Compare the performance of the GPU-based matrix multiplication using cuBLAS with
 #include <cublas_v2.h>
 #include <time.h>
 
-// Column-major indexing
 #define index(i,j,ld) (((j)*(ld))+(i))
 
-// Initialize matrices
 void initializeMatrix(float *matrix, int size) {
-    for (int i = 0; i < size; i++) {
-        for (int j = 0; j < size; j++) {
-            matrix[index(i, j, size)] = (float)(i + j) / size;
+    for (int i=0; i<size; i++) {
+        for (int j=0; j<size; j++) {
+            matrix[index(i,j,size)] = (float)(i+j)/size;
         }
     }
 }
 
-// CPU matrix multiplication
 void cpuMatrixMultiplication(float *A, float *B, float *C, int n) {
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < n; j++) {
-            C[index(i, j, n)] = 0.0f;
-            for (int k = 0; k < n; k++) {
-                C[index(i, j, n)] += A[index(i, k, n)] * B[index(k, j, n)];
+    for (int i=0; i<n; i++) {
+        for (int j=0; j<n; j++) {
+            C[index(i,j,n)] = 0.0f;
+            for (int k=0; k<n; k++) {
+                C[index(i,j,n)] += A[index(i,k,n)] * B[index(k,j,n)];
             }
         }
     }
 }
 
 int main() {
-
     int sizes[] = {256, 512, 1024};
-    int numSizes = 3;
 
-    for (int s = 0; s < numSizes; s++) {
-
+    for (int s=0; s<3; s++) {
         int size = sizes[s];
+
         printf("\nRunning matrix multiplication for size: %d x %d\n", size, size);
 
-        // Host memory
-        float *A = (float*)aligned_alloc(32, size * size * sizeof(float));
-        float *B = (float*)aligned_alloc(32, size * size * sizeof(float));
-        float *C_cpu = (float*)aligned_alloc(32, size * size * sizeof(float));
-        float *C_gpu = (float*)aligned_alloc(32, size * size * sizeof(float));
+        float *A = (float*)malloc(size*size*sizeof(float));
+        float *B = (float*)malloc(size*size*sizeof(float));
+        float *C_cpu = (float*)malloc(size*size*sizeof(float));
+        float *C_gpu = (float*)malloc(size*size*sizeof(float));
 
-        initializeMatrix(A, size);
-        initializeMatrix(B, size);
+        initializeMatrix(A,size);
+        initializeMatrix(B,size);
 
         // CPU timing
         clock_t start_cpu = clock();
-        cpuMatrixMultiplication(A, B, C_cpu, size);
+        cpuMatrixMultiplication(A,B,C_cpu,size);
         clock_t end_cpu = clock();
 
-        double time_cpu = ((double)(end_cpu - start_cpu)) / CLOCKS_PER_SEC;
-        printf("CPU Time: %f seconds\n", time_cpu);
+        double time_cpu =
+            ((double)(end_cpu-start_cpu))/CLOCKS_PER_SEC;
+
+        printf("CPU Matrix Multiplication Time: %f seconds\n", time_cpu);
 
         // GPU memory
         float *d_A, *d_B, *d_C;
-        cudaMalloc((void**)&d_A, size * size * sizeof(float));
-        cudaMalloc((void**)&d_B, size * size * sizeof(float));
-        cudaMalloc((void**)&d_C, size * size * sizeof(float));
+        cudaMalloc((void**)&d_A, size*size*sizeof(float));
+        cudaMalloc((void**)&d_B, size*size*sizeof(float));
+        cudaMalloc((void**)&d_C, size*size*sizeof(float));
 
-        cudaMemcpy(d_A, A, size * size * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_B, B, size * size * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_A,A,size*size*sizeof(float),cudaMemcpyHostToDevice);
+        cudaMemcpy(d_B,B,size*size*sizeof(float),cudaMemcpyHostToDevice);
 
-        // cuBLAS handle
         cublasHandle_t handle;
         cublasCreate(&handle);
 
         float alpha = 1.0f;
         float beta = 0.0f;
 
-        // GPU timing
         cudaEvent_t start, stop;
         cudaEventCreate(&start);
         cudaEventCreate(&stop);
 
         cudaEventRecord(start);
 
-        // cuBLAS GEMM (matrix multiplication)
         cublasSgemm(handle,
-                    CUBLAS_OP_N, CUBLAS_OP_N,
-                    size, size, size,
+                    CUBLAS_OP_N,
+                    CUBLAS_OP_N,
+                    size,size,size,
                     &alpha,
-                    d_B, size,
-                    d_A, size,
+                    d_B,size,
+                    d_A,size,
                     &beta,
-                    d_C, size);
+                    d_C,size);
 
         cudaEventRecord(stop);
         cudaEventSynchronize(stop);
 
         float time_gpu;
-        cudaEventElapsedTime(&time_gpu, start, stop);
+        cudaEventElapsedTime(&time_gpu,start,stop);
 
-        printf("GPU Time (cuBLAS): %f ms\n", time_gpu);
+        printf("GPU Matrix Multiplication Time (cuBLAS): %f milliseconds\n", time_gpu);
 
-        cudaMemcpy(C_gpu, d_C, size * size * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(C_gpu,d_C,size*size*sizeof(float),cudaMemcpyDeviceToHost);
 
         // Verification
         int errors = 0;
-        for (int i = 0; i < size * size; i++) {
-            float denom = fmax(fabs(C_cpu[i]), fabs(C_gpu[i]));
-            float rel_error = (denom == 0) ? 0 : fabs(C_cpu[i] - C_gpu[i]) / denom;
-            if (rel_error > 1e-4) errors++;
+        for (int i=0; i<size*size; i++) {
+            float rel =
+            fabs(C_cpu[i]-C_gpu[i]) /
+            fmax(fabs(C_cpu[i]), fabs(C_gpu[i]));
+
+            if (rel > 1e-4)
+                errors++;
         }
 
-        if (errors == 0)
-            printf("Result Verified Successfully\n");
+        if(errors==0)
+            printf("Results verified successfully for size %d x %d\n", size, size);
         else
-            printf("Mismatch Found\n");
+            printf("Verification failed for size %d x %d\n", size, size);
 
         // Cleanup
         cublasDestroy(handle);
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+
         cudaFree(d_A);
         cudaFree(d_B);
         cudaFree(d_C);
@@ -172,15 +172,16 @@ int main() {
         free(C_cpu);
         free(C_gpu);
     }
-
     return 0;
 }
+'''
+
+with open("matrix_multiplication.cu","w") as f:
+    f.write(cuda_code)
 ```
 
 # OUTPUT:
-
-<img width="1069" height="358" alt="image" src="https://github.com/user-attachments/assets/fabf63c0-d17f-48d4-94ba-451924cbff69" />
-
+<img width="694" height="378" alt="image" src="https://github.com/user-attachments/assets/a66013b7-df0f-49bc-b6c8-e2c3c92b090e" />
 
 # RESULT:
 
